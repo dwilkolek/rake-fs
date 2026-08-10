@@ -22,9 +22,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install FUSE development files
-        run: sudo apt-get update && sudo apt-get install --yes libfuse-dev
-
       - name: Test
         run: go test ./...   
       
