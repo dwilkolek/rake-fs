@@ -49,7 +49,7 @@ func (fs *FileSystem) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 		stat.Size = meta.Size
 		stat.Nlink = meta.NLink
 	default:
-		return -fuse.ENOENT
+		return -fuse.EIO
 	}
 
 	return fuse.F_OK
@@ -88,6 +88,9 @@ func (fs *FileSystem) Open(path string, flags int) (errc int, fh uint64) {
 	meta, err := fs.storage.Stat(path)
 	if err != nil {
 		return storageErrno(err), 0
+	}
+	if meta.Type == storage.NodeTypeDirectory {
+		return -fuse.EISDIR, 0
 	}
 	if flags&fuse.O_ACCMODE != fuse.O_RDONLY || meta.Mode&0444 == 0 {
 		return -fuse.EACCES, 0

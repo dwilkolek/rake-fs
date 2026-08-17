@@ -21,7 +21,9 @@ func main() {
 
 	initTestData(store)
 	defer host.Unmount()
-	host.Mount(mountpoint, []string{"-d"})
+	if !host.Mount(mountpoint, []string{"-d"}) {
+		log.Fatalf("Failed to mount: %s", mountpoint)
+	}
 }
 
 func initTestData(fs *storage.InMemoryStorage) {

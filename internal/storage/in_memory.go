@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -27,6 +29,11 @@ func (i *iNode) toMetadata() Metadata {
 	switch i.nodeType {
 	case NodeTypeDirectory:
 		nlink = 2
+		for _, child := range i.children {
+			if child.nodeType == NodeTypeDirectory {
+				nlink++
+			}
+		}
 		mode = readOnlyDirMode
 	case NodeTypeFile:
 		nlink = 1
@@ -61,6 +68,7 @@ func (fs *InMemoryStorage) Stat(path string) (Metadata, error) {
 
 	return node.toMetadata(), nil
 }
+
 func (fs *InMemoryStorage) List(path string) ([]Entry, error) {
 	node, err := fs.getNode(path)
 	if err != nil {
@@ -72,6 +80,16 @@ func (fs *InMemoryStorage) List(path string) ([]Entry, error) {
 		for name := range node.children {
 			entries = append(entries, Entry{Name: name})
 		}
+		slices.SortStableFunc(entries, func(a Entry, b Entry) int {
+			if node.children[a.Name].nodeType != node.children[b.Name].nodeType {
+				if node.children[a.Name].nodeType == NodeTypeDirectory {
+					return -1
+				} else {
+					return 1
+				}
+			}
+			return cmp.Compare(a.Name, b.Name)
+		})
 		return entries, nil
 	case NodeTypeFile:
 		return nil, fmt.Errorf("%w: %q", ErrNotDirectory, path)
@@ -79,6 +97,7 @@ func (fs *InMemoryStorage) List(path string) ([]Entry, error) {
 		return nil, fmt.Errorf("Unsupported node type for path: %s", path)
 	}
 }
+
 func (fs *InMemoryStorage) ReadAt(path string, dst []byte, offset int64) (int, error) {
 	node, err := fs.getNode(path)
 	if err != nil {
@@ -133,6 +152,9 @@ func (fs *InMemoryStorage) getNode(path string) (*iNode, error) {
 	for _, key := range parts {
 		if key == "" {
 			return nil, fmt.Errorf("%w: %q", ErrInvalidPath, path)
+		}
+		if container.nodeType != NodeTypeDirectory {
+			return nil, fmt.Errorf("%w: %q", ErrNotDirectory, key)
 		}
 		container = container.children[key]
 		if container == nil {

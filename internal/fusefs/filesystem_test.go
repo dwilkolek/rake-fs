@@ -96,9 +96,10 @@ func TestOpenFile(t *testing.T) {
 }
 
 func TestOpenNotExistingFileOrDir(t *testing.T) {
-	_, fs := createTestFs()
+	store, fs := createTestFs()
+	store.AddDir("test")
 
-	if errc, _ := fs.Open("/test.txt", fuse.O_RDONLY); errc != -fuse.ENOENT {
+	if errc, _ := fs.Open("/test/test.txt", fuse.O_RDONLY); errc != -fuse.ENOENT {
 		t.Errorf("Open returned %d, want %d", errc, -fuse.ENOENT)
 	}
 
