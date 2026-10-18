@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 )
 
 const (
@@ -13,6 +14,7 @@ const (
 )
 
 type InMemoryStorage struct {
+	mu   sync.RWMutex
 	root *iNode
 }
 
@@ -61,6 +63,9 @@ func NewInMemoryStorage() *InMemoryStorage {
 }
 
 func (fs *InMemoryStorage) Stat(path string) (Metadata, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
 	node, err := fs.getNode(path)
 	if err != nil {
 		return Metadata{}, err
@@ -70,6 +75,9 @@ func (fs *InMemoryStorage) Stat(path string) (Metadata, error) {
 }
 
 func (fs *InMemoryStorage) List(path string) ([]Entry, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
 	node, err := fs.getNode(path)
 	if err != nil {
 		return nil, err
@@ -99,6 +107,9 @@ func (fs *InMemoryStorage) List(path string) ([]Entry, error) {
 }
 
 func (fs *InMemoryStorage) ReadAt(path string, dst []byte, offset int64) (int, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
 	node, err := fs.getNode(path)
 	if err != nil {
 		return 0, err
@@ -166,6 +177,9 @@ func (fs *InMemoryStorage) getNode(path string) (*iNode, error) {
 
 // Helper methods
 func (fs *InMemoryStorage) AddDir(path string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("%w: %q", ErrInvalidPath, path)
 	}
@@ -174,6 +188,9 @@ func (fs *InMemoryStorage) AddDir(path string) error {
 }
 
 func (fs *InMemoryStorage) AddFile(path string, data []byte) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("%w: %q", ErrInvalidPath, path)
 	}
@@ -186,7 +203,7 @@ func (fs *InMemoryStorage) AddFile(path string, data []byte) error {
 
 	container.children[filename] = &iNode{
 		nodeType: NodeTypeFile,
-		data:     data,
+		data:     append([]byte(nil), data...),
 	}
 	return nil
 }

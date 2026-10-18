@@ -2,6 +2,8 @@ package storage
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -180,6 +182,79 @@ func TestReatAtEnd(t *testing.T) {
 	if string(buff[:n]) != "home" {
 		t.Fatalf("Expected to read: got %s, want %s", buff, "home")
 	}
+}
+
+func TestConcurrentListAndAddFile(t *testing.T) {
+	store := NewInMemoryStorage()
+	if err := store.AddDir("/files"); err != nil {
+		t.Fatalf("AddDir failed: %v", err)
+	}
+
+	const (
+		writerCount = 4
+		readerCount = 4
+		iterations  = 4
+	)
+
+	start := make(chan struct{})
+	errs := make(chan error, (writerCount+readerCount)*iterations)
+
+	var wg sync.WaitGroup
+
+	for writer := range writerCount {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			for iteration := range iterations {
+				path := fmt.Sprintf(
+					"/files/file-%d-%d.txt",
+					writer,
+					iteration,
+				)
+
+				if err := store.AddFile(path, []byte("content")); err != nil {
+					errs <- fmt.Errorf("AddFile(%q): %w", path, err)
+				}
+			}
+		}()
+	}
+
+	for range readerCount {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			for range iterations {
+				if _, err := store.List("/files"); err != nil {
+					errs <- fmt.Errorf("List: %w", err)
+				}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Error(err)
+	}
+
+	entries, err := store.List("/files")
+	if err != nil {
+		t.Fatalf("final List failed: %v", err)
+	}
+
+	want := writerCount * iterations
+	if len(entries) != want {
+		t.Errorf("final entry count = %d, want %d", len(entries), want)
+	}
+
 }
 
 func setupTestStorage() *InMemoryStorage {
