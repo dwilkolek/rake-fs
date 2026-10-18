@@ -3,6 +3,7 @@ package fusefs
 import (
 	"errors"
 
+	"github.com/dwilkolek/rake-fs/internal/pathutil"
 	"github.com/dwilkolek/rake-fs/internal/storage"
 	"github.com/winfsp/cgofuse/fuse"
 )
@@ -20,6 +21,8 @@ func storageErrno(err error) int {
 		return -fuse.ENOTDIR
 	case errors.Is(err, storage.ErrIsDirectory):
 		return -fuse.EISDIR
+	case errors.Is(err, storage.ErrAlreadyExists):
+		return -fuse.EEXIST
 	case errors.Is(err, storage.ErrInvalidPath),
 		errors.Is(err, storage.ErrInvalidOffset):
 		return -fuse.EINVAL
@@ -56,8 +59,13 @@ func (fs *FileSystem) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 }
 
 func (fs *FileSystem) Access(path string, mask uint32) int {
-	if _, err := fs.storage.Stat(path); err != nil {
+	node, err := fs.storage.Stat(path)
+	if err != nil {
 		return storageErrno(err)
+	}
+
+	if !checkAccess(node.Mode, mask) {
+		return -fuse.EACCES
 	}
 
 	return fuse.F_OK
@@ -92,7 +100,9 @@ func (fs *FileSystem) Open(path string, flags int) (errc int, fh uint64) {
 	if meta.Type == storage.NodeTypeDirectory {
 		return -fuse.EISDIR, 0
 	}
-	if flags&fuse.O_ACCMODE != fuse.O_RDONLY || meta.Mode&0444 == 0 {
+
+	mask := openAccessMask(flags)
+	if flags&fuse.O_ACCMODE != fuse.O_RDONLY || !checkAccess(meta.Mode, mask) {
 		return -fuse.EACCES, 0
 	}
 
@@ -111,4 +121,64 @@ func (fs *FileSystem) Read(path string, buff []byte, ofst int64, fh uint64) (n i
 	}
 
 	return n
+}
+
+func (fs *FileSystem) Create(path string, flags int, mode uint32) (int, uint64) {
+
+	parentPath, _, ok := pathutil.SplitParent(path)
+	if !ok {
+		return -fuse.EINVAL, 0
+	}
+
+	meta, err := fs.storage.Stat(parentPath)
+	if err != nil {
+		return storageErrno(err), 0
+	}
+	if meta.Type != storage.NodeTypeDirectory {
+		return -fuse.ENOTDIR, 0
+	}
+	if !checkAccess(meta.Mode, fuse.W_OK|fuse.X_OK) {
+		return -fuse.EACCES, 0
+	}
+
+	err = fs.storage.Create(path, int(mode))
+	if err != nil {
+		return storageErrno(err), 0
+	}
+
+	return fuse.F_OK, 0
+}
+
+// mode owner=110 group=100 other=100 = 644
+// mask 100=r--, 110=rw-, 111=rwx
+func checkAccess(mode int, mask uint32) bool {
+	ownerPermissions := (mode >> 6) & 7
+
+	//requested read && ownerPermissions has read = 0
+	if mask&fuse.R_OK != 0 && ownerPermissions&4 == 0 {
+		return false
+	}
+
+	if mask&fuse.W_OK != 0 && ownerPermissions&2 == 0 {
+		return false
+	}
+
+	if mask&fuse.X_OK != 0 && ownerPermissions&1 == 0 {
+		return false
+	}
+
+	return true
+}
+
+func openAccessMask(flags int) uint32 {
+	switch flags & fuse.O_ACCMODE {
+	case fuse.O_RDONLY:
+		return fuse.R_OK
+	case fuse.O_WRONLY:
+		return fuse.W_OK
+	case fuse.O_RDWR:
+		return fuse.R_OK | fuse.W_OK
+	default:
+		return 0
+	}
 }

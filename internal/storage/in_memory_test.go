@@ -8,12 +8,11 @@ import (
 )
 
 func TestAddDirs(t *testing.T) {
-	storage := NewInMemoryStorage()
-	err := storage.AddDir("/dir1/dir2/dir3")
-	if err != nil {
-		t.Fatalf("AddDir failed: %v", err)
+	store := NewInMemoryStorage()
+	if err := store.HelperAddDir("/dir1/dir2/dir3"); err != nil {
+		t.Fatalf("AddDir failed, %v", err)
 	}
-	dir1 := storage.root.children["dir1"]
+	dir1 := store.root.children["dir1"]
 	if dir1 == nil || dir1.nodeType != NodeTypeDirectory {
 		t.Fatalf("FindNode returned nil or a file for existing directory")
 	}
@@ -27,34 +26,110 @@ func TestAddDirs(t *testing.T) {
 	}
 }
 
-func TestAddFiles(t *testing.T) {
-	storage := NewInMemoryStorage()
-	err := storage.AddFile("/dir1/dir2/file.txt", []byte("Hello, World!"))
+func TestCreateFile(t *testing.T) {
+	store := NewInMemoryStorage()
+	if err := store.HelperAddDir("/dir1/dir2"); err != nil {
+		t.Fatalf("AddDir failed, %v", err)
+	}
+	err := store.Create("/dir1/dir2/file.txt", 0644)
 	if err != nil {
-		t.Fatalf("AddFile failed: %v", err)
+		t.Fatalf("Create failed: %v", err)
 	}
 
-	dir1 := storage.root.children["dir1"]
-	if dir1 == nil || dir1.nodeType != NodeTypeDirectory {
-		t.Fatalf("FindNode returned nil or a file for existing directory")
+	meta, err := store.Stat("/dir1/dir2/file.txt")
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
 	}
-	dir2 := dir1.children["dir2"]
-	if dir2 == nil || dir2.nodeType != NodeTypeDirectory {
-		t.Fatalf("FindNode returned nil or a file for existing directory")
-	}
-	file := dir2.children["file.txt"]
 
-	if file == nil || file.nodeType != NodeTypeFile {
-		t.Fatalf("FindNode returned nil or a directory for existing file")
+	if meta.Type != NodeTypeFile {
+		t.Errorf("type = %q, want %q", meta.Type, NodeTypeFile)
 	}
-	if string(file.data) != "Hello, World!" {
-		t.Fatalf("File data mismatch: got %q, want %q", string(file.data), "Hello, World!")
+	if meta.Mode != 0644 {
+		t.Errorf("mode = %#o, want 0644", meta.Mode)
+	}
+	if meta.Size != 0 {
+		t.Errorf("size = %d, want 0", meta.Size)
+	}
+}
+
+var invalidPaths = []struct {
+	path string
+}{
+	{""},
+	{"file.txt"},
+	{"/"},
+	{"/dir/"},
+	{"/dir//file.txt"},
+}
+
+func TestCreateErrInvalidPath(t *testing.T) {
+	for _, tt := range invalidPaths {
+		t.Run(tt.path, func(t *testing.T) {
+			store := NewInMemoryStorage()
+			err := store.Create(tt.path, 0644)
+			if !errors.Is(err, ErrInvalidPath) {
+				t.Fatalf("Create should fail on invalid path: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateErrNotDirectory(t *testing.T) {
+	store := NewInMemoryStorage()
+	if err := store.HelperAddDir("/dir1"); err != nil {
+		t.Fatalf("AddDir failed, %v", err)
+	}
+	err := store.Create("/dir1/dir2", 0777)
+	if err != nil {
+		t.Fatalf("Create file failed: %v", err)
+	}
+	err = store.Create("/dir1/dir2/file.txt", 0644)
+	if !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("Create should fail on creating file inside file: %v", err)
+	}
+}
+
+func TestCreateErrAlreadyExists(t *testing.T) {
+	store := NewInMemoryStorage()
+
+	workers := 100
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	for range workers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			err := store.Create("/file.txt", 0777)
+			errs <- err
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+	createdCount := 0
+	for err := range errs {
+		if err == nil {
+			createdCount++
+			continue
+		}
+		if !errors.Is(err, ErrAlreadyExists) {
+			t.Fatalf("Crate should fail on creating creating when file already exists: %v", err)
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("Expected file to created exactly once but got: %d", createdCount)
 	}
 }
 
 func TestStatDir(t *testing.T) {
-	storage := setupTestStorage()
-	meta, err := storage.Stat("/")
+	store := setupTestStorage(t)
+	meta, err := store.Stat("/")
 
 	if err != nil {
 		t.Fatalf("Stat returned error")
@@ -70,14 +145,14 @@ func TestStatDir(t *testing.T) {
 	if meta.Size != 0 {
 		t.Fatalf("MetaData Size mismatch: got %d, want %d", meta.Size, 0)
 	}
-	if meta.Mode != 0555 {
-		t.Fatalf("MetaData Mode mismatch: got %d, want %d", meta.Mode, 0555)
+	if meta.Mode != 0755 {
+		t.Fatalf("MetaData Mode mismatch: got %#o, want %#o", meta.Mode, 0755)
 	}
 }
 
 func TestStatFile(t *testing.T) {
-	storage := setupTestStorage()
-	meta, err := storage.Stat("/swap")
+	store := setupTestStorage(t)
+	meta, err := store.Stat("/swap")
 
 	if err != nil {
 		t.Fatalf("Stat returned error: got %q, want nil", err)
@@ -93,14 +168,14 @@ func TestStatFile(t *testing.T) {
 	if meta.Size != 16 {
 		t.Fatalf("MetaData Size mismatch: got %d, want %d", meta.Size, 16)
 	}
-	if meta.Mode != 0444 {
-		t.Fatalf("MetaData Mode mismatch: got %d, want %d", meta.Mode, 0444)
+	if meta.Mode != 0644 {
+		t.Fatalf("MetaData Mode mismatch: got %#o, want %#o", meta.Mode, 0644)
 	}
 }
 
 func TestStatNotExisting(t *testing.T) {
-	storage := setupTestStorage()
-	_, err := storage.Stat("/not-existing")
+	store := setupTestStorage(t)
+	_, err := store.Stat("/not-existing")
 
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Stat expected to error, got %q, want %q", err, ErrNotFound)
@@ -109,8 +184,8 @@ func TestStatNotExisting(t *testing.T) {
 }
 
 func TestStatInvalidPath(t *testing.T) {
-	storage := setupTestStorage()
-	_, err := storage.Stat("/swap//file.txt")
+	store := setupTestStorage(t)
+	_, err := store.Stat("/swap//file.txt")
 
 	if !errors.Is(err, ErrInvalidPath) {
 		t.Fatalf("Stat expected to error, got %q, want %q", err, ErrInvalidPath)
@@ -118,8 +193,8 @@ func TestStatInvalidPath(t *testing.T) {
 }
 
 func TestListValidPath(t *testing.T) {
-	storage := setupTestStorage()
-	entries, err := storage.List("/home")
+	store := setupTestStorage(t)
+	entries, err := store.List("/home")
 	expected := []Entry{
 		{Name: "others"}, //dirs first
 		{Name: "damian"}, //then alphabethical order
@@ -139,19 +214,19 @@ func TestListValidPath(t *testing.T) {
 	}
 }
 
-func TestListOnFileh(t *testing.T) {
-	storage := setupTestStorage()
-	_, err := storage.List("/swap")
+func TestListOnFile(t *testing.T) {
+	store := setupTestStorage(t)
+	_, err := store.List("/swap")
 
 	if !errors.Is(err, ErrNotDirectory) {
 		t.Fatalf("List expected to error, got %q, want %q", err, ErrNotDirectory)
 	}
 }
 
-func TestReatAt(t *testing.T) {
-	storage := setupTestStorage()
+func TestReadAt(t *testing.T) {
+	store := setupTestStorage(t)
 	buff := make([]byte, 8)
-	n, err := storage.ReadAt("/home/damian", buff, 6)
+	n, err := store.ReadAt("/home/damian", buff, 6)
 
 	if err != nil {
 		t.Fatalf("ReadAt returned error: got %q, want nil", err)
@@ -166,10 +241,10 @@ func TestReatAt(t *testing.T) {
 	}
 }
 
-func TestReatAtEnd(t *testing.T) {
-	storage := setupTestStorage()
+func TestReadAtEnd(t *testing.T) {
+	store := setupTestStorage(t)
 	buff := make([]byte, 10)
-	n, err := storage.ReadAt("/home/damian", buff, 15)
+	n, err := store.ReadAt("/home/damian", buff, 15)
 
 	if err != nil {
 		t.Fatalf("ReadAt returned error: got %q, want nil", err)
@@ -184,9 +259,60 @@ func TestReatAtEnd(t *testing.T) {
 	}
 }
 
+func TestReadAtEOF(t *testing.T) {
+	store := NewInMemoryStorage()
+	if err := store.HelperAddFile("/file.txt", []byte("hello")); err != nil {
+		t.Fatalf("AddFile failed: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		offset int64
+	}{
+		{name: "exact EOF", offset: 5},
+		{name: "past EOF", offset: 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := store.ReadAt("/file.txt", make([]byte, 4), tt.offset)
+			if err != nil {
+				t.Fatalf("ReadAt returned error: %v", err)
+			}
+			if n != 0 {
+				t.Errorf("ReadAt returned %d bytes, want 0", n)
+			}
+		})
+	}
+}
+
+func TestReadAtNegativeOffset(t *testing.T) {
+	store := NewInMemoryStorage()
+	if err := store.HelperAddFile("/file.txt", []byte("hello")); err != nil {
+		t.Fatalf("AddFile failed: %v", err)
+	}
+
+	_, err := store.ReadAt("/file.txt", make([]byte, 1), -1)
+	if !errors.Is(err, ErrInvalidOffset) {
+		t.Fatalf("ReadAt error = %v, want ErrInvalidOffset", err)
+	}
+}
+
+func TestReadAtDirectory(t *testing.T) {
+	store := NewInMemoryStorage()
+	if err := store.HelperAddDir("/dir"); err != nil {
+		t.Fatalf("AddDir failed: %v", err)
+	}
+
+	_, err := store.ReadAt("/dir", make([]byte, 1), 0)
+	if !errors.Is(err, ErrIsDirectory) {
+		t.Fatalf("ReadAt error = %v, want ErrIsDirectory", err)
+	}
+}
+
 func TestConcurrentListAndAddFile(t *testing.T) {
 	store := NewInMemoryStorage()
-	if err := store.AddDir("/files"); err != nil {
+	if err := store.HelperAddDir("/files"); err != nil {
 		t.Fatalf("AddDir failed: %v", err)
 	}
 
@@ -215,7 +341,7 @@ func TestConcurrentListAndAddFile(t *testing.T) {
 					iteration,
 				)
 
-				if err := store.AddFile(path, []byte("content")); err != nil {
+				if err := store.HelperAddFile(path, []byte("content")); err != nil {
 					errs <- fmt.Errorf("AddFile(%q): %w", path, err)
 				}
 			}
@@ -257,14 +383,28 @@ func TestConcurrentListAndAddFile(t *testing.T) {
 
 }
 
-func setupTestStorage() *InMemoryStorage {
-	storage := NewInMemoryStorage()
-	storage.AddDir("/home")
-	storage.AddFile("/home/julia", []byte("art is key"))
-	storage.AddFile("/home/damian", []byte("smeet home, my home"))
-	storage.AddDir("/home/others")
+func setupTestStorage(t *testing.T) *InMemoryStorage {
+	t.Helper()
 
-	storage.AddDir("/tmp")
-	storage.AddFile("/swap", []byte("some random data"))
-	return storage
+	store := NewInMemoryStorage()
+	if err := store.HelperAddDir("/home"); err != nil {
+		t.Fatalf("Failed in test setup: %v", err)
+	}
+	if err := store.HelperAddFile("/home/julia", []byte("art is key")); err != nil {
+		t.Fatalf("Failed in test setup: %v", err)
+	}
+	if err := store.HelperAddFile("/home/damian", []byte("smeet home, my home")); err != nil {
+		t.Fatalf("Failed in test setup: %v", err)
+	}
+	if err := store.HelperAddDir("/home/others"); err != nil {
+		t.Fatalf("Failed in test setup: %v", err)
+	}
+
+	if err := store.HelperAddDir("/tmp"); err != nil {
+		t.Fatalf("Failed in test setup: %v", err)
+	}
+	if err := store.HelperAddFile("/swap", []byte("some random data")); err != nil {
+		t.Fatalf("Failed in test setup: %v", err)
+	}
+	return store
 }

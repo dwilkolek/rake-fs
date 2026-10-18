@@ -19,14 +19,22 @@ func main() {
 	myfs := fusefs.NewFileSystem(store)
 	host := fuse.NewFileSystemHost(myfs)
 
-	initTestData(store)
+	err := initTestData(store)
+	if err != nil {
+		log.Fatalf("Failed init test data: %v", err)
+	}
 	defer host.Unmount()
 	if !host.Mount(mountpoint, []string{"-d"}) {
 		log.Fatalf("Failed to mount: %s", mountpoint)
 	}
 }
 
-func initTestData(fs *storage.InMemoryStorage) {
-	fs.AddFile("/hello.txt", []byte("Hello, World!\nthis is a test file for the FUSE filesystem.\n Enjoy!"))
-	fs.AddDir("/testdir")
+func initTestData(fs *storage.InMemoryStorage) error {
+	if err := fs.HelperAddFile("/hello.txt", []byte("Hello, World!\nthis is a test file for the FUSE filesystem.\n Enjoy!")); err != nil {
+		return err
+	}
+	if err := fs.HelperAddDir("/testdir"); err != nil {
+		return err
+	}
+	return nil
 }

@@ -6,11 +6,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/dwilkolek/rake-fs/internal/pathutil"
 )
 
 const (
-	readOnlyFileMode = 0444
-	readOnlyDirMode  = 0555
+	defaultFileMode = 0644
+	defaultDirMode  = 0755
 )
 
 type InMemoryStorage struct {
@@ -55,7 +57,7 @@ func NewInMemoryStorage() *InMemoryStorage {
 		root: &iNode{
 			nodeType: NodeTypeDirectory,
 			children: map[string]*iNode{},
-			mode:     readOnlyDirMode,
+			mode:     defaultDirMode,
 		},
 	}
 }
@@ -126,6 +128,37 @@ func (fs *InMemoryStorage) ReadAt(path string, dst []byte, offset int64) (int, e
 	return n, nil
 }
 
+func (fs *InMemoryStorage) Create(path string, mode int) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	dir, file, ok := pathutil.SplitParent(path)
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrInvalidPath, path)
+	}
+
+	parent, err := fs.getNode(dir)
+	if err != nil {
+		return err
+	}
+
+	if parent.nodeType != NodeTypeDirectory {
+		return fmt.Errorf("%w: %q", ErrNotDirectory, dir)
+	}
+
+	if _, exists := parent.children[file]; exists {
+		return fmt.Errorf("%w: %q", ErrAlreadyExists, path)
+	}
+
+	parent.children[file] = &iNode{
+		nodeType: NodeTypeFile,
+		mode:     mode & 0777,
+		data:     []byte{},
+	}
+
+	return nil
+}
+
 func (fs *InMemoryStorage) mkdirs(path []string) (*iNode, error) {
 	if path == nil {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidPath, path)
@@ -141,7 +174,7 @@ func (fs *InMemoryStorage) mkdirs(path []string) (*iNode, error) {
 			childDir = &iNode{
 				nodeType: NodeTypeDirectory,
 				children: map[string]*iNode{},
-				mode:     readOnlyDirMode,
+				mode:     defaultDirMode,
 			}
 			container.children[key] = childDir
 		}
@@ -175,7 +208,7 @@ func (fs *InMemoryStorage) getNode(path string) (*iNode, error) {
 }
 
 // Helper methods
-func (fs *InMemoryStorage) AddDir(path string) error {
+func (fs *InMemoryStorage) HelperAddDir(path string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
@@ -186,7 +219,7 @@ func (fs *InMemoryStorage) AddDir(path string) error {
 	return err
 }
 
-func (fs *InMemoryStorage) AddFile(path string, data []byte) error {
+func (fs *InMemoryStorage) HelperAddFile(path string, data []byte) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
@@ -203,7 +236,19 @@ func (fs *InMemoryStorage) AddFile(path string, data []byte) error {
 	container.children[filename] = &iNode{
 		nodeType: NodeTypeFile,
 		data:     append([]byte(nil), data...),
-		mode:     readOnlyFileMode,
+		mode:     defaultFileMode,
 	}
+	return nil
+}
+
+func (fs *InMemoryStorage) HelperChangeMode(path string, mode int) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	node, err := fs.getNode(path)
+	if err != nil {
+		return err
+	}
+	node.mode = mode
 	return nil
 }

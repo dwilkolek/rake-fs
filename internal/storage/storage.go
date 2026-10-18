@@ -1,6 +1,8 @@
 package storage
 
-import "errors"
+import (
+	"errors"
+)
 
 type NodeType string
 
@@ -10,6 +12,7 @@ var (
 	ErrIsDirectory   = errors.New("is a directory")
 	ErrInvalidPath   = errors.New("invalid path")
 	ErrInvalidOffset = errors.New("invalid offset")
+	ErrAlreadyExists = errors.New("already exists")
 )
 
 const (
@@ -26,6 +29,8 @@ type Storage interface {
 	Stat(path string) (Metadata, error)
 	List(path string) ([]Entry, error)
 	ReadAt(path string, dst []byte, offset int64) (int, error)
+
+	Create(path string, mode int) error
 }
 
 type Metadata struct {
