@@ -21,13 +21,13 @@ type InMemoryStorage struct {
 type iNode struct {
 	nodeType NodeType
 	data     []byte
+	mode     int
 	children map[string]*iNode
 }
 
 func (i *iNode) toMetadata() Metadata {
 
 	var nlink int
-	var mode int
 	switch i.nodeType {
 	case NodeTypeDirectory:
 		nlink = 2
@@ -36,18 +36,15 @@ func (i *iNode) toMetadata() Metadata {
 				nlink++
 			}
 		}
-		mode = readOnlyDirMode
 	case NodeTypeFile:
 		nlink = 1
-		mode = readOnlyFileMode
 	default:
 		nlink = 0
-		mode = 0000
 	}
 
 	return Metadata{
 		Type:  i.nodeType,
-		Mode:  mode,
+		Mode:  i.mode,
 		Size:  int64(len(i.data)),
 		NLink: uint32(nlink),
 	}
@@ -58,6 +55,7 @@ func NewInMemoryStorage() *InMemoryStorage {
 		root: &iNode{
 			nodeType: NodeTypeDirectory,
 			children: map[string]*iNode{},
+			mode:     readOnlyDirMode,
 		},
 	}
 }
@@ -143,6 +141,7 @@ func (fs *InMemoryStorage) mkdirs(path []string) (*iNode, error) {
 			childDir = &iNode{
 				nodeType: NodeTypeDirectory,
 				children: map[string]*iNode{},
+				mode:     readOnlyDirMode,
 			}
 			container.children[key] = childDir
 		}
@@ -204,6 +203,7 @@ func (fs *InMemoryStorage) AddFile(path string, data []byte) error {
 	container.children[filename] = &iNode{
 		nodeType: NodeTypeFile,
 		data:     append([]byte(nil), data...),
+		mode:     readOnlyFileMode,
 	}
 	return nil
 }
