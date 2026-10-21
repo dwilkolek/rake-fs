@@ -83,20 +83,39 @@ func TestReadWholeFile(t *testing.T) {
 }
 
 func TestOpenFile(t *testing.T) {
-	store, fs := createTestFs()
-	if err := store.HelperAddFile("/testfile.txt", []byte("This is a test file.")); err != nil {
-		t.Fatalf("AddDir failed: %v", err)
+	tests := []struct {
+		name      string
+		filePerm  int
+		readOnly  int
+		writeOnly int
+		readWrite int
+	}{
+		{"read write", 0600, fuse.F_OK, fuse.F_OK, fuse.F_OK},
+		{"read only", 0400, fuse.F_OK, -fuse.EACCES, -fuse.EACCES},
+		{"write only", 0200, -fuse.EACCES, fuse.F_OK, -fuse.EACCES},
+		{"no access", 0000, -fuse.EACCES, -fuse.EACCES, -fuse.EACCES},
 	}
 
-	if errc, _ := fs.Open("/testfile.txt", fuse.O_RDONLY); errc != fuse.F_OK {
-		t.Errorf("Open returned %d, want %d", errc, fuse.F_OK)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, fs := createTestFs()
+			file := "/testfile.txt"
+			if err := store.Create(file, tt.filePerm); err != nil {
+				t.Fatalf("Create failed: %v", err)
+			}
+
+			if errc, _ := fs.Open(file, fuse.O_RDONLY); errc != tt.readOnly {
+				t.Errorf("Open returned %d, want %d", errc, tt.readOnly)
+			}
+			if errc, _ := fs.Open(file, fuse.O_WRONLY); errc != tt.writeOnly {
+				t.Errorf("Open returned %d, want %d", errc, tt.writeOnly)
+			}
+			if errc, _ := fs.Open(file, fuse.O_RDWR); errc != tt.readWrite {
+				t.Errorf("Open returned %d, want %d", errc, tt.readWrite)
+			}
+		})
 	}
-	if errc, _ := fs.Open("/testfile.txt", fuse.O_WRONLY); errc != -fuse.EACCES {
-		t.Errorf("Open returned %d, want %d", errc, -fuse.EACCES)
-	}
-	if errc, _ := fs.Open("/testfile.txt", fuse.O_RDWR); errc != -fuse.EACCES {
-		t.Errorf("Open returned %d, want %d", errc, -fuse.EACCES)
-	}
+
 }
 
 func TestOpenDirectory(t *testing.T) {
@@ -156,6 +175,82 @@ func TestReadDir(t *testing.T) {
 
 	if status := fs.Read("/not_existing", make([]byte, 2), 5, 0); status != -fuse.ENOENT {
 		t.Errorf("Read returned %d bytes, want status %d", status, -fuse.ENOENT)
+	}
+}
+
+func TestWriteAt(t *testing.T) {
+	initial := "hello"
+	change := "XY"
+	expected := "hXYlo"
+	_, fs := createTestFs()
+	if errc, _ := fs.Create("/file.txt", fuse.O_WRONLY|fuse.O_CREAT, 0700); errc != fuse.F_OK {
+		t.Fatalf("Create result %d, want %d", errc, fuse.F_OK)
+	}
+	if errc := fs.Write("/file.txt", []byte(initial), 0, 0); errc != len(initial) {
+		t.Fatalf("Write result %d, want %d", errc, len(initial))
+	}
+	if errc := fs.Write("/file.txt", []byte(change), 1, 0); errc != len(change) {
+		t.Fatalf("Write result %d, want %d", errc, len(change))
+	}
+	buff := make([]byte, 100)
+	read := fs.Read("/file.txt", buff, 0, 0)
+
+	if read != len(expected) {
+		t.Fatalf("Read returned %d, want %d", read, len(expected))
+	}
+
+	actual := string(buff[0:read])
+
+	if actual != expected {
+		t.Fatalf("Expected %s but got %s", expected, actual)
+	}
+}
+
+func TestWriteAtToDir(t *testing.T) {
+	data := "hello"
+	store, fs := createTestFs()
+	if err := store.HelperAddDir("/dir"); err != nil {
+		t.Fatalf("CreateDir failed, %v", err)
+	}
+
+	errc := fs.Write("/dir", []byte(data), 0, 0)
+	if errc != -fuse.EISDIR {
+		t.Fatalf("Write result %d, want %d", errc, -fuse.EISDIR)
+	}
+}
+
+func TestWriteWithNegOffset(t *testing.T) {
+	data := "hello"
+	_, fs := createTestFs()
+	if errc, _ := fs.Create("/file.txt", fuse.O_WRONLY|fuse.O_CREAT, 0700); errc != fuse.F_OK {
+		t.Fatalf("Create result %d, want %d", errc, fuse.F_OK)
+	}
+
+	errc := fs.Write("/file.txt", []byte(data), -1, 0)
+	if errc != -fuse.EINVAL {
+		t.Fatalf("Write result %d, want %d", errc, -fuse.EINVAL)
+	}
+}
+
+func TestWriteWithEmptyWrite(t *testing.T) {
+
+	_, fs := createTestFs()
+	if errc, _ := fs.Create("/file.txt", fuse.O_WRONLY|fuse.O_CREAT, 0700); errc != fuse.F_OK {
+		t.Fatalf("Create result %d, want %d", errc, fuse.F_OK)
+	}
+
+	n := fs.Write("/file.txt", []byte(""), 0, 0)
+	if n != 0 {
+		t.Fatalf("Write result %d, want %d", n, 0)
+	}
+}
+
+func TestWriteToMissingFile(t *testing.T) {
+	_, fs := createTestFs()
+
+	errc := fs.Write("/file.txt", []byte(""), 0, 0)
+	if errc != -fuse.ENOENT {
+		t.Fatalf("Write result %d, want %d", errc, -fuse.ENOENT)
 	}
 }
 
@@ -386,11 +481,22 @@ func TestOpenAccessMask(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := openAccessMask(tt.flags)
+			got, ok := openAccessMask(tt.flags)
+			if !ok {
+				t.Errorf("openAccessMask(%d) returned not ok", tt.flags)
+			}
 			if got != tt.want {
 				t.Errorf("openAccessMask(%d) = %d, want %d", tt.flags, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestOpenAccessMaskInvalid(t *testing.T) {
+	flags := fuse.O_WRONLY | fuse.O_RDWR
+	_, ok := openAccessMask(flags)
+	if ok {
+		t.Fatalf("openAccessMask(%d) returned ok for invalid flags", flags)
 	}
 }
 

@@ -101,8 +101,8 @@ func (fs *FileSystem) Open(path string, flags int) (errc int, fh uint64) {
 		return -fuse.EISDIR, 0
 	}
 
-	mask := openAccessMask(flags)
-	if flags&fuse.O_ACCMODE != fuse.O_RDONLY || !checkAccess(meta.Mode, mask) {
+	mask, ok := openAccessMask(flags)
+	if !ok || !checkAccess(meta.Mode, mask) {
 		return -fuse.EACCES, 0
 	}
 
@@ -149,6 +149,21 @@ func (fs *FileSystem) Create(path string, flags int, mode uint32) (int, uint64) 
 	return fuse.F_OK, 0
 }
 
+func (fs *FileSystem) Write(path string, buff []byte, ofst int64, fh uint64) int {
+	n, err := fs.storage.WriteAt(path, buff, ofst)
+	if n > 0 {
+		return n
+	}
+	if err != nil {
+		return storageErrno(err)
+	}
+
+	if len(buff) > 0 {
+		return -fuse.EIO // avoid a zero-progress write
+	}
+	return n
+}
+
 // mode owner=110 group=100 other=100 = 644
 // mask 100=r--, 110=rw-, 111=rwx
 func checkAccess(mode int, mask uint32) bool {
@@ -170,15 +185,15 @@ func checkAccess(mode int, mask uint32) bool {
 	return true
 }
 
-func openAccessMask(flags int) uint32 {
+func openAccessMask(flags int) (uint32, bool) {
 	switch flags & fuse.O_ACCMODE {
 	case fuse.O_RDONLY:
-		return fuse.R_OK
+		return fuse.R_OK, true
 	case fuse.O_WRONLY:
-		return fuse.W_OK
+		return fuse.W_OK, true
 	case fuse.O_RDWR:
-		return fuse.R_OK | fuse.W_OK
+		return fuse.R_OK | fuse.W_OK, true
 	default:
-		return 0
+		return 0, false
 	}
 }

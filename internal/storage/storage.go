@@ -31,6 +31,7 @@ type Storage interface {
 	ReadAt(path string, dst []byte, offset int64) (int, error)
 
 	Create(path string, mode int) error
+	WriteAt(path string, data []byte, offset int64) (int, error)
 }
 
 type Metadata struct {

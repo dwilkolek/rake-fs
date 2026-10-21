@@ -310,6 +310,109 @@ func TestReadAtDirectory(t *testing.T) {
 	}
 }
 
+func TestWriting(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial string
+		change  string
+		ofst    int64
+		want    string
+	}{
+		{"write to empty file", "", "hello", 0, "hello"},
+		{"write at the start", "hello", "X", 0, "Xello"},
+		{"write in the middle", "hello", "XY", 1, "hXYlo"},
+		{"write at the end", "hello", "hello", 5, "hellohello"},
+		{"write after the end", "hello", "hello", 8, "hello\x00\x00\x00hello"},
+		{"write empty at the start", "hello", "", 0, "hello"},
+		{"write empty in the middle", "hello", "", 3, "hello"},
+		{"write empty at the end", "hello", "", 5, "hello"},
+		{"write empty past the end", "hello", "", 8, "hello"},
+		{"write 1 byte at the start", "hello", "X", 0, "Xello"},
+		{"write 1 byte in the middle", "hello", "X", 2, "heXlo"},
+		{"write 1 byte past the end", "hello", "X", 8, "hello\x00\x00\x00X"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := "/test.txt"
+			store := setupTestStorage(t)
+			if err := store.Create(path, 0644); err != nil {
+				t.Fatalf("Created failed %v", err)
+			}
+			if len(tt.initial) > 0 {
+				if _, err := store.WriteAt(path, []byte(tt.initial), 0); err != nil {
+					t.Fatalf("WriteAt inital data failed: %v", err)
+				}
+			}
+			written, err := store.WriteAt(path, []byte(tt.change), tt.ofst)
+			if err != nil {
+				t.Fatalf("WriteAt change data failed: %v", err)
+			}
+			if written != len(tt.change) {
+				t.Fatalf("WriteAt wrote partially: %d of %d", written, len(tt.change))
+			}
+
+			buff := make([]byte, 100)
+			read, err := store.ReadAt(path, buff, 0)
+			if err != nil {
+				t.Fatalf("Unexpected error while reading, %v", err)
+			}
+			actual := string(buff[0:read])
+			if actual != tt.want {
+				t.Errorf("Write stored %q, want %q", actual, tt.want)
+			}
+
+			meta, err := store.Stat(path)
+			if err != nil {
+				t.Fatalf("Unexpected error while stat, %v", err)
+			}
+
+			if meta.Size != int64(len(tt.want)) {
+				t.Errorf("Written stored file size %d, want %d", meta.Size, len(tt.want))
+			}
+		})
+	}
+}
+
+func TestWritingNegOffset(t *testing.T) {
+	path := "/test.txt"
+	store := setupTestStorage(t)
+	if err := store.Create(path, 0644); err != nil {
+		t.Fatalf("Create failed %v", err)
+	}
+
+	_, err := store.WriteAt(path, []byte("any"), -1)
+
+	if !errors.Is(err, ErrInvalidOffset) {
+		t.Fatalf("Write got %v, want %v", err, ErrInvalidOffset)
+	}
+}
+
+func TestWritingErrIsDirectory(t *testing.T) {
+	path := "/test"
+	store := setupTestStorage(t)
+	if err := store.HelperAddDir(path); err != nil {
+		t.Fatalf("CreateDir failed %v", err)
+	}
+
+	_, err := store.WriteAt(path, []byte("any"), 0)
+
+	if !errors.Is(err, ErrIsDirectory) {
+		t.Fatalf("Write got %v, want %v", err, ErrIsDirectory)
+	}
+}
+
+func TestWritingErrNotFound(t *testing.T) {
+	path := "/test"
+	store := setupTestStorage(t)
+
+	_, err := store.WriteAt(path, []byte("any"), 0)
+
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Write got %v, want %v", err, ErrNotFound)
+	}
+}
+
 func TestConcurrentListAndAddFile(t *testing.T) {
 	store := NewInMemoryStorage()
 	if err := store.HelperAddDir("/files"); err != nil {

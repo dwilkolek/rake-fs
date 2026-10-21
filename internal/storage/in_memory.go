@@ -159,6 +159,45 @@ func (fs *InMemoryStorage) Create(path string, mode int) error {
 	return nil
 }
 
+func (fs *InMemoryStorage) WriteAt(path string, data []byte, offset int64) (int, error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	node, err := fs.getNode(path)
+	if err != nil {
+		return 0, err
+	}
+
+	if node.nodeType != NodeTypeFile {
+		return 0, fmt.Errorf("%w: %q", ErrIsDirectory, path)
+	}
+
+	maxInt := int64(^uint(0) >> 1)
+
+	inputDataSize := len(data)
+
+	if offset < 0 || offset > maxInt {
+		return 0, fmt.Errorf("%w: %d", ErrInvalidOffset, offset)
+	}
+	if inputDataSize == 0 {
+		return 0, nil
+	}
+
+	if int64(inputDataSize) > maxInt-offset {
+		return 0, fmt.Errorf("%w: write exceeds addressable memory", ErrInvalidOffset)
+	}
+
+	start := int(offset)
+	end := start + inputDataSize
+	if end > len(node.data) {
+		missing := end - len(node.data)
+		node.data = append(node.data, make([]byte, missing)...)
+	}
+
+	n := copy(node.data[start:end], data)
+	return n, nil
+}
+
 func (fs *InMemoryStorage) mkdirs(path []string) (*iNode, error) {
 	if path == nil {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidPath, path)
