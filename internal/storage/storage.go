@@ -13,6 +13,8 @@ var (
 	ErrInvalidPath   = errors.New("invalid path")
 	ErrInvalidOffset = errors.New("invalid offset")
 	ErrAlreadyExists = errors.New("already exists")
+	ErrInvalidValue  = errors.New("invalid value")
+	// ErrRequestedSizeTooLarge = errors.New("requested size is too large")
 )
 
 const (
@@ -32,6 +34,7 @@ type Storage interface {
 
 	Create(path string, mode int) error
 	WriteAt(path string, data []byte, offset int64) (int, error)
+	Truncate(path string, size int64) error
 }
 
 type Metadata struct {

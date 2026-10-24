@@ -413,6 +413,60 @@ func TestWritingErrNotFound(t *testing.T) {
 	}
 }
 
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial string
+		size    int64
+		want    string
+	}{
+		// {"negative size", "hello", -1,  "hello"},
+		// {"too large size", "hello", 10, "hello"},
+		{"size 0 ", "hello", 0, ""},
+		{"in half ", "hello", 2, "he"},
+		{"do nothing ", "hello", 5, "hello"},
+		{"do nothing ", "hello", 8, "hello\x00\x00\x00"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := "/test.txt"
+			store := setupTestStorage(t)
+			if err := store.Create(path, 0644); err != nil {
+				t.Fatalf("Created failed %v", err)
+			}
+			if len(tt.initial) > 0 {
+				if _, err := store.WriteAt(path, []byte(tt.initial), 0); err != nil {
+					t.Fatalf("WriteAt inital data failed: %v", err)
+				}
+			}
+			err := store.Truncate(path, tt.size)
+			if err != nil {
+				t.Fatalf("Truncate failed: %v", err)
+			}
+
+			buff := make([]byte, 100)
+			read, err := store.ReadAt(path, buff, 0)
+			if err != nil {
+				t.Fatalf("Unexpected error while reading, %v", err)
+			}
+			actual := string(buff[0:read])
+			if actual != tt.want {
+				t.Errorf("Write stored %q, want %q", actual, tt.want)
+			}
+
+			meta, err := store.Stat(path)
+			if err != nil {
+				t.Fatalf("Unexpected error while stat, %v", err)
+			}
+
+			if meta.Size != tt.size {
+				t.Errorf("Truncated stored file size %d, want %d", meta.Size, len(tt.want))
+			}
+		})
+	}
+}
+
 func TestConcurrentListAndAddFile(t *testing.T) {
 	store := NewInMemoryStorage()
 	if err := store.HelperAddDir("/files"); err != nil {

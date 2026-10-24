@@ -164,6 +164,15 @@ func (fs *FileSystem) Write(path string, buff []byte, ofst int64, fh uint64) int
 	return n
 }
 
+func (fs *FileSystem) Truncate(path string, size int64, fh uint64) int {
+	err := fs.storage.Truncate(path, size)
+	if err != nil {
+		return storageErrno(err)
+	}
+
+	return fuse.F_OK
+}
+
 // mode owner=110 group=100 other=100 = 644
 // mask 100=r--, 110=rw-, 111=rwx
 func checkAccess(mode int, mask uint32) bool {

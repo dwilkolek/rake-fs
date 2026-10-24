@@ -198,6 +198,31 @@ func (fs *InMemoryStorage) WriteAt(path string, data []byte, offset int64) (int,
 	return n, nil
 }
 
+func (fs *InMemoryStorage) Truncate(path string, size int64) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	node, err := fs.getNode(path)
+	if err != nil {
+		return err
+	}
+
+	if node.nodeType != NodeTypeFile {
+		return fmt.Errorf("%w: %q", ErrIsDirectory, path)
+	}
+	if size < 0 {
+		return fmt.Errorf("%w: %d", ErrInvalidValue, size)
+	}
+
+	if size < int64(len(node.data)) {
+		node.data = node.data[0:size]
+	} else {
+		node.data = append(node.data, make([]byte, size-int64(len(node.data)))...)
+	}
+
+	return nil
+}
+
 func (fs *InMemoryStorage) mkdirs(path []string) (*iNode, error) {
 	if path == nil {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidPath, path)
