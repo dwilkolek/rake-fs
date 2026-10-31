@@ -173,6 +173,46 @@ func (fs *FileSystem) Truncate(path string, size int64, fh uint64) int {
 	return fuse.F_OK
 }
 
+func (fs *FileSystem) Mkdir(path string, mode uint32) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Unlink(path string) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Rmdir(path string) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Rename(oldpath string, newpath string) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Chmod(path string, mode uint32) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Release(path string, fh uint64) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Flush(path string, fh uint64) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Fsync(path string, datasync bool, fh uint64) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Statfs(path string, stat *fuse.Statfs_t) int {
+	return -fuse.ENOSYS
+}
+
+func (fs *FileSystem) Utimens(path string, tmsp []fuse.Timespec) int {
+	return -fuse.ENOSYS
+}
+
 // mode owner=110 group=100 other=100 = 644
 // mask 100=r--, 110=rw-, 111=rwx
 func checkAccess(mode int, mask uint32) bool {
