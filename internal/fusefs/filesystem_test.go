@@ -414,6 +414,38 @@ func TestReadNegativeOffsetReturnsEINVAL(t *testing.T) {
 	}
 }
 
+func TestTruncate(t *testing.T) {
+	_, fs := createTestFs()
+	result, _ := fs.Create("/file.txt", fuse.O_WRONLY|fuse.O_CREAT, 0700)
+	if result != fuse.F_OK {
+		t.Errorf("Create returned %d, want %d", result, fuse.F_OK)
+	}
+	given := "hello world yey"
+	expected := "hello worl"
+	written := fs.Write("/file.txt", []byte(given), 0, 0)
+	if written != len(given) {
+		t.Errorf("Writen got %d, want %d", written, len(given))
+	}
+
+	code := fs.Truncate("/file.txt", 10, 0)
+	if code != fuse.F_OK {
+		t.Errorf("Truncate got %v, want %v", code, fuse.F_OK)
+	}
+
+	buff := make([]byte, 100)
+
+	read := fs.Read("/file.txt", buff, 0, 0)
+
+	if read != 10 {
+		t.Errorf("Read got %d, want %d", read, 10)
+	}
+
+	if string(buff[0:read]) != expected {
+		t.Errorf("Read %s, want %s", string(buff[0:read]), expected)
+	}
+
+}
+
 func TestStorageErrno(t *testing.T) {
 	tests := []struct {
 		name string

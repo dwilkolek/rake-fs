@@ -467,6 +467,24 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+func TestTrucateDir(t *testing.T) {
+	store := NewInMemoryStorage()
+	store.HelperAddDir("/dir")
+	err := store.Truncate("/dir", 10)
+	if !errors.Is(err, ErrIsDirectory) {
+		t.Errorf("Truncate got %v, want %v", err, ErrIsDirectory)
+	}
+}
+
+func TestTrucateInvalid(t *testing.T) {
+	store := NewInMemoryStorage()
+	store.Create("/file.txt", 0600)
+	err := store.Truncate("/file.txt", -1)
+	if !errors.Is(err, ErrInvalidValue) {
+		t.Errorf("Truncate got %v, want %v", err, ErrInvalidValue)
+	}
+}
+
 func TestConcurrentListAndAddFile(t *testing.T) {
 	store := NewInMemoryStorage()
 	if err := store.HelperAddDir("/files"); err != nil {
